@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='pyfindimage',
-    version='0.25',
+    version='0.3.01',
     packages=['locater'],
     url='',
     license='MIT',

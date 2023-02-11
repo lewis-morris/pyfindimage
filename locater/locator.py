@@ -1,6 +1,7 @@
 import datetime
 import filecmp
 import os
+import pickle
 import random
 import re
 import shutil
@@ -20,15 +21,17 @@ from locater.functions import is_large_file, pprint, shrink_stock_ref, fix_nan, 
 
 
 class Locator:
-    def __init__(self, search_path: str, out_path: str, data_file: str, *args, **kwargs):
+    def __init__(self, job_name, search_path: str, out_path: str, data_file: str, *args, **kwargs):
         """Class for locating and organizing files based on search terms.
 
+        :param job_name: Name of job
         :param search_path: Path to search for files.
         :param out_path: Path to output files.
         :param data_file: File consisting of columns in this order: search_term, description, groupingmain, groupingsecondary, etc.
         """
 
         # source of the files and its length so it doesn't have to be computed each time
+        self.job_name = job_name
         self.files_source = []
         self.files_len = 0
         # list of eventual files once loaded
@@ -45,11 +48,22 @@ class Locator:
         self.verbose = True if "verbose" not in kwargs else True if kwargs["verbose"] else False
         # extra information that could be used later
         self.extra = {"exact_match_paths": [], "search_matches": 0, "search_partials": 0, "search_dupes": 0,
-                      "matches_ext": "same", "alt_ext": "alt"}
+                      "matches_ext": "same", "alt_ext": "alt", "current_match_val": 0}
         # list of the new file paths
         self.paths = {"matches": [], "partials": []}
-        #dict of all copies key is new_location
+        # dict of all copies key is new_location
         self.file_copies = {}
+
+    def save_job(self):
+        filename = f"{self.job_name}.pickle"
+        with open(filename, 'wb') as f:
+            pickle.dump(self.__dict__, f)
+
+    def load_from_save(self):
+        filename = f"{self.job_name}.pickle"
+        with open(filename, 'rb') as f:
+            self.__dict__.update(pickle.load(f))
+
     def _create_out_data(self):
         df = self._base_data.copy()
         df = df[[df.columns.to_list()[0], df.columns.to_list()[2]]]
@@ -180,7 +194,7 @@ class Locator:
         for check_file in filenames:
 
             # Check if the filename matches the input file name or follows the pattern "{filename}_alt*"
-            if is_image_match(src_file, check_file): #filecmp.cmp(src_file, check_file):
+            if is_image_match(src_file, check_file):  # filecmp.cmp(src_file, check_file):
                 # If a matching filename is found, get the full file path
                 matching_file = os.path.join(directory, check_file)
 
@@ -193,7 +207,6 @@ class Locator:
                     self.file_copies[matching_file] = src_file
                 # End the loop once a match has been found and handled
                 return matching_file
-
 
         new_filename = f"{ref}_{self._get_alt_path()}" + str(random.randint(0, 99999)) + "." + ext
         new_full_path = os.path.join(directory, new_filename)
@@ -226,7 +239,7 @@ class Locator:
         if is_image_product(src_file):
             dst_file = add_top_level_parent_directory(dst_file, ref, "_background")
 
-        #fixes filepath if needed
+        # fixes filepath if needed
         dst_file = make_filepath_valid(dst_file)
 
         # Make folders in the file path if they do not exist
@@ -251,7 +264,7 @@ class Locator:
             # Catch any errors that occur during the copying process
             print("Error with " + dst_file)
 
-    def _rename_largest_image(filepath: str) -> None:
+    def _rename_largest_image(self, filepath: str) -> None:
         # Get the directory and filename without the suffix
         directory, filename = os.path.split(filepath)
         base, ext = os.path.splitext(filename)
@@ -309,9 +322,9 @@ class Locator:
             new_filename = make_filename_valid(sku_real) + "." + ext
             # get new path
             new_path = os.path.join(self.out_path, typ, self._get_path_end(sku_real), new_filename)
-            #get source
+            # get source
             source_fl = os.path.join(filebase + file)
-            #check not in match folder already
+            # check not in match folder already
 
             copy = True
             if partial:
@@ -322,6 +335,7 @@ class Locator:
         except Exception as e:
             pass
             # errors.append(["deal_with_match", ref, e])
+
     def _check_match(self, src, dest, sku_real, ref):
         """
         Checks to see if there is already a match in the MATCH folder, if so there is no reason
@@ -382,9 +396,6 @@ class Locator:
                     if self.verbose and len(arr) % 10000 == 0:
                         pprint("Found len" + str(len(arr)))
 
-        if self.verbose:
-            print("\nMatch files complete")
-
         return arr
 
     def _build_file_lists(self, frm="partials"):
@@ -416,6 +427,8 @@ class Locator:
         self._check_paths(path)
         self._get_files(path)
         self.files_len = len(self.files_source)
+        if self.verbose:
+            print("\nLoad files complete")
 
     def match_files(self):
         """
@@ -427,7 +440,12 @@ class Locator:
 
         now = datetime.datetime.now()
 
-        for i, listed_file in enumerate(self.files_source):
+        for i, listed_file in enumerate(self.files_source[self.extra["current_match_val"]:]):
+
+            # this is used so you can re-load from where you left off
+            i = self.extra["current_match_val"]
+            self.extra["current_match_val"] += 1
+
             # splits file into its parts
             file_path, root, file = listed_file
             # shinks the file name with the same rules as the input data does
@@ -445,6 +463,11 @@ class Locator:
                     f"Img {i} checked   Total Matches: {self._get_matches()}  Total Partials {self._get_partials()}  Total Dupes {self._get_dupes()}",
                     i,
                     self.files_len, now)
+            if i % 200 == 0:
+                self.save_job()
+
+        self.save_job()
+
         if self.verbose:
             print("\nMatch files complete")
 
@@ -454,17 +477,17 @@ class Locator:
         """
         files = self._build_file_lists()
 
-        #list of files that need to be deleted later
+        # list of files that need to be deleted later
         delete_list = []
-        #these paths need to have images allocated
+        # these paths need to have images allocated
         paths_to_check_move = []
         for ref, desc, files, source in files:
             for path in files:
-                #this offers some other products it may be
-                matches = closest_matches(ref, self._base_data.iloc[:,0]).values.tolist()
-                #shows the window to choose what to do with partial match
+                # this offers some other products it may be
+                matches = closest_matches(ref, self._base_data.iloc[:, 0]).values.tolist()
+                # shows the window to choose what to do with partial match
                 out_path, delete_path = show_image_window(path, ref, desc, self._copy_file_with_checks, matches, source)
-                #adds output to list for later processing
+                # adds output to list for later processing
                 if out_path:
                     paths_to_check_move.append(out_path)
                 if delete_list:
@@ -510,5 +533,3 @@ class Locator:
             df.loc[df["possible_filename"] == file, "match"] = True
 
         return df
-
-

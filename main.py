@@ -1,6 +1,6 @@
 from locater import Locator
 
-lctr = Locator("/home/lewis/fileStore", "/home/lewis/fileOut", "~/Downloads/prostock.xlsx")
+lctr = Locator("move_bulk", "/home/lewis/fileStore", "/home/lewis/fileOut", "~/Downloads/prostock.xlsx")
 lctr.load_files()
 lctr.match_files()
 df = lctr.reload_complete_df()
