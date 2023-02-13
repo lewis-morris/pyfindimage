@@ -5,8 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
-import turtle
-from io import StringIO
+
 
 import cv2
 import imagehash
@@ -16,7 +15,6 @@ from PIL import Image
 from PySimpleGUI import WIN_CLOSED
 from screeninfo import get_monitors
 import PySimpleGUI as sg
-import pyexiv2
 
 
 def convert_nan(val):
@@ -271,6 +269,17 @@ def resize_image(img, new_width, new_height):
     resized = cv2.resize(img, (int(new_width), int(new_height)))
     return resized
 
+def delete_list_of_files(files):
+    for file in files:
+        os.remove(file)
+def rename_list_of_files(files, alt="_alt"):
+    for file in files:
+        file_name, key = file
+        dir, fl = os.path.split(file_name)
+        ext = fl.split(".")[-1]
+        just_file = fl.replace("." + ext, "")
+        rm_alt = just_file.split(alt)[0]
+        shutil.move(file_name, os.path.join(dir, f"{rm_alt}__{key}.{ext}") )
 
 def show_real_check(filenames, ref, description, originals):
     # sg.theme('Dark Brown')
@@ -285,38 +294,113 @@ def show_real_check(filenames, ref, description, originals):
 
     pngs = []
     for file in filenames:
-         img = resize_and_pad_with_background(resize_image(cv2.imread(file), image_width, image_height),
+        img = resize_and_pad_with_background(resize_image(cv2.imread(file), image_width, image_height),
                                              int(image_width), int(image_height), (255, 255, 255))
-         pngs.append(cv2.imencode(".png", img)[1].tobytes())
+        pngs.append(cv2.imencode(".png", img)[1].tobytes())
 
+    dic = {"keep": [], "delete": []}
+
+    def loop_keys():
+        keys = [x.split("_")[0] for x in list(values.keys())]
+        for key in keys:
+            yield key
+    def clear_all():
+        for key in loop_keys():
+            window.Element(f"{key}_text").update("")
+    def all_full():
+        for key in loop_keys():
+            if not values[f"{key}_text"]:
+                return False
+        return True
+
+    def get_next_number():
+        reorder_list = []
+        for key in loop_keys():
+            if values[f"{key}_text"] not in ["delete",""]:
+                reorder_list.append(int(values[f"{key}_text"]))
+        return max(reorder_list)+1 if reorder_list else 1
+
+    def get_next_number():
+        reorder_list = []
+        for key in loop_keys():
+            if values[f"{key}_text"] not in ["delete",""]:
+                reorder_list.append(int(values[f"{key}_text"]))
+        return max(reorder_list)+1 if reorder_list else 1
+
+
+    def get_deal_with_all():
+        delete_list = []
+        reorder_list = []
+        for key in loop_keys():
+            if values[f"{key}_text"] == "delete":
+                delete_list.append(filenames[int(key)])
+            else:
+                reorder_list.append([filenames[int(key)], values[f"{key}_text"]])
+
+        if not validate_list([x[1] for x in reorder_list]):
+            sg.popup("You haven't got the list of priority right check again please", title="Error", button_type=None, auto_close=False, auto_close_duration=None)
+        else:
+            return delete_list, reorder_list
+    def validate_list(strings):
+        # convert the strings to integers
+        integers = [int(s) for s in strings]
+
+        # sort the integers
+        integers.sort()
+
+        # check for duplicates
+        if len(integers) != len(set(integers)):
+            return False
+
+        # check if the integers are in order, starting from 1
+        for i, num in enumerate(integers, start=1):
+            if num != i:
+                return False
+
+        return True
 
     img_list = []
     ind = 0
     for fl in filenames:
-        img_list += [[sg.Image(pngs[ind], size=(image_width, image_height))],
-                         [sg.Button('Keep', key=f"{ind}_leave", metadata={"file": fl}),
-                          sg.Button('Delete', key=f"{ind}_leave", metadata={"file": fl})],
-                         [sg.Text(originals[ind])]]
+        img_list.append(sg.Column([[sg.Image(pngs[ind], size=(image_width, image_height))],
+                                   [sg.Button('Keep', key=f"{ind}_keep", metadata={"file": fl}),
+                                    sg.Button('Delete', key=f"{ind}_delete", metadata={"file": fl}),
+                                    sg.Button('View', key=f"{ind}_view", metadata={"file": fl})],
+                                   [sg.Text(originals[ind])], [sg.Input(key=f"{ind}_text")]]))
 
         if len(img_list) == 3:
-            layout += img_list
+            layout.append(img_list)
             img_list = []
         ind += 1
-    layout += img_list
+    layout.append(img_list)
 
-
-    layout.append([[sg.HorizontalSeparator()], [sg.Button('Done', key="leave")]])
+    layout.append([[sg.HorizontalSeparator()], [sg.Button('Clear', key="clear"), sg.Button('Done', key="leave")]])
 
     window = sg.Window('Image Viewer', layout, size=(screen_width, screen_height),
                        element_justification='center')
 
     while True:
         event, values = window.read()
-        if event == 'Done':
-            break
+        if event == 'leave':
+            if all_full():
+                delete_list, reorder_list = get_deal_with_all()
+                window.close()
+                return delete_list, reorder_list
+            else:
+                sg.popup("You haven't filled in all the products", title="Error", button_type=None, auto_close=False, auto_close_duration=None)
+        elif "clear" in event:
+            clear_all()
+        elif "keep" in event:
+            key_val = event.split("_")[0]
+            window.Element(f"{key_val}_text").update(get_next_number())
+        elif "delete" in event:
+            key_val = event.split("_")[0]
+            window.Element(f"{key_val}_text").update("delete")
+        elif "view" in event:
+            key_val = event.split("_")[0]
+            open_file(window.Element(f"{key_val}_view").metadata["file"])
 
     window.close()
-
 
 def show_image_window(filename, ref, description, move_func, ref_matches=None, source=None):
     """
@@ -543,8 +627,8 @@ def count_matches(strings, x, path):
         return None
 
     return closest_match(exact_matches, x), \
-        closest_match(first_section_matches, x), \
-        closest_match(partial_matches, x), \
+        first_section_matches.tolist(), \
+        partial_matches.tolist(), \
         closest_match(path_matches, x) or closest_match(path_matches_one, x)
 
 

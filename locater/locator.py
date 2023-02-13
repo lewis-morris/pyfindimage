@@ -17,7 +17,7 @@ from locater.functions import is_large_file, pprint, shrink_stock_ref, fix_nan, 
     count_matches, add_suffix_to_file, is_image_match, make_folders_from_filepath, \
     add_top_level_parent_directory, is_image_product, replace_strange_folder_paths, get_alternate_files, \
     show_image_window, show_folder_window, remove_alt_from_path, make_filepath_valid, closest_matches, is_file_same, \
-    remove_partial_folders_add_match, show_real_check
+    remove_partial_folders_add_match, show_real_check, delete_list_of_files, rename_list_of_files
 
 
 class Locator:
@@ -73,9 +73,11 @@ class Locator:
 
     def _load_data(self, file_path):
         # Determine the file extension
-        file_extension = file_path[-4:]
+        file_extension = file_path[-5:]
         # Choose the appropriate reader function based on the file extension
         if "xls" in file_extension:
+            reader = pd.read_excel
+        if "xlsx" in file_extension:
             reader = pd.read_excel
         elif "csv" in file_extension in "csv":
             reader = pd.read_csv
@@ -124,7 +126,11 @@ class Locator:
     def _add_partial(self, ref=None):
         self.extra["search_partials"] += 1
         if ref:
-            self._out_data.loc[self._out_data[self._out_data.columns.tolist()[0]] == ref, "partials"] = True
+            if type(ref) is str:
+                self._out_data.loc[self._out_data[self._out_data.columns.tolist()[0]] == ref, "partials"] = True
+            else:
+                for re in ref:
+                    self._out_data.loc[self._out_data[self._out_data.columns.tolist()[0]] == re, "partials"] = True
 
     def _add_dupe(self):
         self.extra["search_dupes"] += 1
@@ -171,10 +177,14 @@ class Locator:
     def _shrunk_to_ref(self, shrunk):
         """Return the original reference for the given shrunken reference.
 
-        :param shrunk: The shrunken reference to expand.
+        :param shrunk: The shrunken reference to expand. Can be a list, if so, a list of results is returned
         :return: The original reference.
         """
-        return self.lookup_data[np.where(self.lookup_data[:, 1] == shrunk)[0], 0][0]
+        if isinstance(shrunk, str):
+            return self.lookup_data[np.where(self.lookup_data[:, 1] == shrunk)[0], 0][0]
+        else:
+            return [self.lookup_data[np.where(self.lookup_data[:, 1] == s)[0], 0][0] for s in shrunk]
+
 
     def _deal_with_matches_etc(self, dst_file, src_file, copymv_func=shutil.copy2):
         """
@@ -192,12 +202,10 @@ class Locator:
         filenames = get_alternate_files(dst_file, self._get_alt_path())
 
         for check_file in filenames:
-
             # Check if the filename matches the input file name or follows the pattern "{filename}_alt*"
             if is_image_match(src_file, check_file):  # filecmp.cmp(src_file, check_file):
                 # If a matching filename is found, get the full file path
                 matching_file = os.path.join(directory, check_file)
-
                 # Check if the matching file is an image match with the input file
                 # If the matching file is an image match, compare the file sizes
                 if os.path.getsize(check_file) > os.path.getsize(check_file):
@@ -300,37 +308,41 @@ class Locator:
         """
         ext = file.split(".")[-1]
         # convert shunk to real sku
-        sku_real = self._shrunk_to_ref(ref)
+        sku_real_ = self._shrunk_to_ref(ref)
 
         partial = True
         if matchqty[0]:
-            self._add_match(sku_real)
+            self._add_match(sku_real_)
             typ = "match/"
             partial = False
         elif matchqty[1]:
             typ = "partial/"
-            self._add_partial(sku_real)
+            self._add_partial(sku_real_)
         elif matchqty[2]:
             typ = "partial_other/"
-            self._add_partial(sku_real)
+            self._add_partial(sku_real_)
         elif matchqty[3]:
             typ = "folder_match/"
-            self._add_partial(sku_real)
+            self._add_partial(sku_real_)
 
         try:
-            # get filename
-            new_filename = make_filename_valid(sku_real) + "." + ext
-            # get new path
-            new_path = os.path.join(self.out_path, typ, self._get_path_end(sku_real), new_filename)
-            # get source
-            source_fl = os.path.join(filebase + file)
-            # check not in match folder already
+            if isinstance(sku_real_, str):
+                sku_real_ = [sku_real_]
 
-            copy = True
-            if partial:
-                copy = not self._check_match(source_fl, new_path, sku_real, ref)
-            # copy file
-            copy and self._copy_file_with_checks(source_fl, new_path, sku_real)
+            for sku_real in sku_real_:
+                # get filename
+                new_filename = make_filename_valid(sku_real) + "." + ext
+                # get new path
+                new_path = os.path.join(self.out_path, typ, self._get_path_end(sku_real), new_filename)
+                # get source
+                source_fl = os.path.join(filebase + file)
+                # check not in match folder already
+
+                copy = True
+                if partial:
+                    copy = not self._check_match(source_fl, new_path, sku_real, ref)
+                # copy file
+                copy and self._copy_file_with_checks(source_fl, new_path, sku_real)
 
         except Exception as e:
             pass
@@ -345,10 +357,13 @@ class Locator:
         try:
             files = get_alternate_files(match_dest, self._get_alt_path())
             for file in files:
-                if is_image_match(file, src):
-                    return True
-                if filecmp.cmp(file, src):
-                    return True
+                try:
+                    if is_image_match(file, src):
+                        return True
+                    if filecmp.cmp(file, src):
+                        return True
+                except:
+                    pass
         except:
             pass
         return False
@@ -439,37 +454,46 @@ class Locator:
         """
 
         now = datetime.datetime.now()
+        try:
+            for i, listed_file in enumerate(self.files_source[self.extra["current_match_val"]:]):
 
-        for i, listed_file in enumerate(self.files_source[self.extra["current_match_val"]:]):
+                # this is used so you can re-load from where you left off
+                i = self.extra["current_match_val"]
+                self.extra["current_match_val"] += 1
 
-            # this is used so you can re-load from where you left off
-            i = self.extra["current_match_val"]
-            self.extra["current_match_val"] += 1
+                # splits file into its parts
+                file_path, root, file = listed_file
+                # shinks the file name with the same rules as the input data does
+                code = shrink_stock_ref(file.replace(file.split(".")[-1], ""))
+                # checks for a match of either, full, partial, reverse partial, or directory match
+                match = count_matches(self.code_data, code, file_path)
+                # gets the match
 
-            # splits file into its parts
-            file_path, root, file = listed_file
-            # shinks the file name with the same rules as the input data does
-            code = shrink_stock_ref(file.replace(file.split(".")[-1], ""))
-            # checks for a match of either, full, partial, reverse partial, or directory match
-            match = count_matches(self.code_data, code, file_path)
-            # gets the match
-            check_match = [x for x in list(match) if x]
-            # deals with it if one found
-            if len(check_match) > 0:
-                self._deal_with_match(match, file, root, check_match[0])
-            # prints if needed
-            if self.verbose and i % 50 == 0:
-                pprint(
-                    f"Img {i} checked   Total Matches: {self._get_matches()}  Total Partials {self._get_partials()}  Total Dupes {self._get_dupes()}",
-                    i,
-                    self.files_len, now)
-            if i % 200 == 0:
-                self.save_job()
+                check_match = [x for x in list(match) if x]
 
-        self.save_job()
+                # deals with it if one found
+                if len(check_match) > 0:
+                    if isinstance(check_match[0], list):
+                        # this is here becuase sometimes theres more than once match
+                        for mtch in check_match[0]:
+                            self._deal_with_match(match, file, root, mtch)
+                    else:
+                        self._deal_with_match(match, file, root, check_match[0])
+                # prints if needed
+                if self.verbose and i % 50 == 0:
+                    pprint(
+                        f"Img {i} checked   Total Matches: {self._get_matches()}  Total Partials {self._get_partials()}  Total Dupes {self._get_dupes()}",
+                        i,
+                        self.files_len, now)
+                if i % 200 == 0:
+                    self.save_job()
 
-        if self.verbose:
-            print("\nMatch files complete")
+            self.save_job()
+
+            if self.verbose:
+                print("\nMatch files complete")
+        except:
+            pass
 
     def check_move_partials(self):
         """Shows all images that are in the partial folders, it then shows you the desctiption the product reference
@@ -485,31 +509,40 @@ class Locator:
             for path in files:
                 # this offers some other products it may be
                 matches = closest_matches(ref, self._base_data.iloc[:, 0]).values.tolist()
-                # shows the window to choose what to do with partial match
-                out_path, delete_path = show_image_window(path, ref, desc, self._copy_file_with_checks, matches, source)
-                # adds output to list for later processing
-                if out_path:
-                    paths_to_check_move.append(out_path)
-                if delete_list:
-                    delete_list.append(delete_path)
+                #checks if the file still exists
+                if os.path.isfile(path):
+                    # shows the window to choose what to do with partial match
+                    out_path, delete_path = show_image_window(path, ref, desc, self._copy_file_with_checks, matches, source)
+                    # adds output to list for later processing
+                    if out_path:
+                        paths_to_check_move.append(out_path)
+                    if delete_list:
+                        delete_list.append(delete_path)
+                else:
+                    if self.verbose:
+                        print(f"missing file {path}")
 
-        # opens window to move images to correct folder
-        if paths_to_check_move:
-            for path in list(set(paths_to_check_move)):
-                show_folder_window(path)
+            # opens window to move images to correct folder
+            if paths_to_check_move:
+                for path in list(set(paths_to_check_move)):
+                    show_folder_window(path)
+                    paths_to_check_move = []
 
-        # deletes needed files
-        if delete_list:
-            for path in list(set(delete_list)):
-                os.remove(path)
+            # deletes needed files
+            if delete_list:
+                for path in list(set(delete_list)):
+                    os.remove(path)
+                    delete_list = []
 
     def check_matches(self):
         alt_sect = self._get_alt_path()
         for fl in self.paths["matches"]:
-            if "_" + alt_sect not in fl[1]:
+            if "_" + alt_sect not in fl[1] and "__" not in fl[1]:
                 files = get_alternate_files(fl[1], alt_sect)
                 origs = [self.file_copies[x] for x in files]
-                show_real_check(files, fl[0], self._get_desc(fl[0]), origs)
+                delete_list, reorder_list = show_real_check(files, fl[0], self._get_desc(fl[0]), origs)
+                delete_list_of_files(delete_list)
+                rename_list_of_files(reorder_list)
 
     def view_matches(self):
         return self._out_data.loc[self._out_data["matches"] > 0]
