@@ -600,8 +600,11 @@ def count_matches(strings, x, path):
     """
     exact_matches = strings[np.where(strings == x)[0]]
 
-    matches = np.char.startswith(strings, x)
-    first_section_matches = strings[np.where(matches)[0]]
+    if len(x) >= 3:
+        matches = np.char.startswith(strings, x)
+        first_section_matches = strings[np.where(matches)[0]]
+    else:
+        first_section_matches = np.array([])
 
     max_len = np.max([len(s) for s in strings])
     repeated_search_term = x.rjust(max_len)
