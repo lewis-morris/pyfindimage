@@ -53,6 +53,7 @@ class Locator:
         self.paths = {"matches": [], "partials": []}
         # dict of all copies key is new_location
         self.file_copies = {}
+        self.hashes = {}
 
     def save_job(self):
         filename = f"{self.job_name}.pickle"
@@ -185,7 +186,11 @@ class Locator:
         else:
             return [self.lookup_data[np.where(self.lookup_data[:, 1] == s)[0], 0][0] for s in shrunk]
 
-
+    def _get_hash(self, src):
+        hash = None
+        if src in self.hashes:
+            hash = self.hashes[src]
+        return hash
     def _deal_with_matches_etc(self, dst_file, src_file, copymv_func=shutil.copy2):
         """
         Handles files with matching names in the same directory as the input file. Checks to see if any match and then keeps the largest one.
@@ -203,7 +208,11 @@ class Locator:
 
         for check_file in filenames:
             # Check if the filename matches the input file name or follows the pattern "{filename}_alt*"
-            if is_image_match(src_file, check_file):  # filecmp.cmp(src_file, check_file):
+
+            i_match, hash_out = is_image_match(src_file, check_file, self._get_hash(self.file_copies.get(check_file)))
+            self.hashes[src_file] = hash_out
+
+            if i_match:  # filecmp.cmp(src_file, check_file):
                 # If a matching filename is found, get the full file path
                 matching_file = os.path.join(directory, check_file)
                 # Check if the matching file is an image match with the input file
@@ -324,6 +333,9 @@ class Locator:
         elif matchqty[3]:
             typ = "folder_match/"
             self._add_partial(sku_real_)
+        elif matchqty[4]:
+            typ = "start_match/"
+            self._add_partial(sku_real_)
 
         try:
             if isinstance(sku_real_, str):
@@ -404,7 +416,7 @@ class Locator:
                     file = entry.name
                     root = entry.path.replace(entry.name, "").replace("\\", "/")
                     file_path = os.path.join(root, file)
-                    image = 1 if file.split(".")[-1].lower() in ["jpg", "jpeg", "png", "gif", "webp"] else 0
+                    image = 1 if file.split(".")[-1].lower() in ["jpg", "jpeg", "png"] else 0
                     if image and is_large_file(entry):
                         arr.append([file_path, root, file])
 

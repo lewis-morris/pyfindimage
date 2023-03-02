@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import sys
 
-
 import cv2
 import imagehash
 import numpy as np
@@ -31,18 +30,42 @@ def is_image_product(file_path):
     # Increase the contrast by 50%
     image = np.interp(image, (0, 255), (-0.5, 0.5))
     image = np.clip(image * 1.5 + 0.5, 0, 255).astype(np.uint8)
-    # Get the top left and bottom right pixels of the image
-    top_left = image[0, 0]
-    bottom_right = image[-1, -1]
-    # Check if the top left and bottom right pixels are either white, transparent, or a combination of both
+    # Check if the top-left, top-right, bottom-left, and bottom-right pixels are either white or transparent
     if has_alpha:
-        is_top_left_white_or_transparent = np.all(top_left[:3] >= (230, 230, 230)) or top_left[3] == 0
-        is_bottom_right_white_or_transparent = np.all(bottom_right[:3] >= (230, 230, 230)) or bottom_right[3] == 0
+        top_left = image[0, 0]
+        bottom_right = image[-1, -1]
+        is_white_or_transparent = (np.all(top_left[:3] >= (230, 230, 230)) or top_left[3] == 0) and (
+                    np.all(bottom_right[:3] >= (230, 230, 230)) or bottom_right[3] == 0)
     else:
-        is_top_left_white_or_transparent = np.all(top_left >= (230, 230, 230))
-        is_bottom_right_white_or_transparent = np.all(bottom_right >= (230, 230, 230))
+        top_left, top_right = image[0, 0], image[0, -1]
+        bottom_left, bottom_right = image[-1, 0], image[-1, -1]
+        is_white_or_transparent = np.all(top_left >= (230, 230, 230)) and np.all(bottom_right >= (230, 230, 230))
 
-    return is_top_left_white_or_transparent and is_bottom_right_white_or_transparent
+    return np.all(is_white_or_transparent)
+
+
+# def is_image_product(file_path):
+#     # Load the image
+#     image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+#     # Check if the image has an alpha channel
+#     has_alpha = image.shape[2] == 4
+#     # Convert the image from BGR to RGB
+#     image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA) if has_alpha else cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+#     # Increase the contrast by 50%
+#     image = np.interp(image, (0, 255), (-0.5, 0.5))
+#     image = np.clip(image * 1.5 + 0.5, 0, 255).astype(np.uint8)
+#     # Get the top left and bottom right pixels of the image
+#     top_left = image[0, 0]
+#     bottom_right = image[-1, -1]
+#     # Check if the top left and bottom right pixels are either white, transparent, or a combination of both
+#     if has_alpha:
+#         is_top_left_white_or_transparent = np.all(top_left[:3] >= (230, 230, 230)) or top_left[3] == 0
+#         is_bottom_right_white_or_transparent = np.all(bottom_right[:3] >= (230, 230, 230)) or bottom_right[3] == 0
+#     else:
+#         is_top_left_white_or_transparent = np.all(top_left >= (230, 230, 230))
+#         is_bottom_right_white_or_transparent = np.all(bottom_right >= (230, 230, 230))
+#
+#     return is_top_left_white_or_transparent and is_bottom_right_white_or_transparent
 
 
 def add_top_level_parent_directory(file_path, folder_ref, folder_suffix="_background"):
@@ -80,7 +103,7 @@ def make_filename_valid_from_fullpath(filepath):
 
 
 def is_filepath_with_filename(filepath):
-    file_extensions = ['.jpg', '.jpeg', '.gif', '.png']
+    file_extensions = ['.jpg', '.jpeg', '.png']
     for ext in file_extensions:
         if filepath.lower().endswith(ext):
             return True
@@ -107,7 +130,7 @@ def make_filepath_valid(filepath):
     return make_filename_valid_from_fullpath(out_path)
 
 
-def is_image_match(fl, fl1):
+def is_image_match(fl, fl1, hash=None):
     """
     Checks if two images are visually similar (i.e a match)
 
@@ -116,21 +139,22 @@ def is_image_match(fl, fl1):
     :return: BOOL if match
     """
     # Load images
-    img1 = Image.open(fl)
-    img2 = Image.open(fl1)
+    if not hash:
+        img1 = Image.open(fl)
+        # Compute perceptual hashes
+        hash = imagehash.phash(img1)
 
-    # Compute perceptual hashes
-    hash1 = imagehash.phash(img1)
+    img2 = Image.open(fl1)
     hash2 = imagehash.phash(img2)
 
     # Compare hashes
-    hamming_distance = hash1 - hash2
+    hamming_distance = hash - hash2
 
     # Set a threshold for the hamming distance
     if hamming_distance < 10:
-        return True
+        return True, hash
     else:
-        return False
+        return False, hash
 
 
 def remove_partial_folders_add_match(path):
@@ -232,6 +256,7 @@ def show_folder_window(path):
         elif event == WIN_CLOSED:
             break
 
+
 def resize_and_pad_with_background(image, desired_width, desired_height, background_color):
     original_height, original_width = image.shape[:2]
     original_aspect_ratio = original_width / original_height
@@ -269,9 +294,12 @@ def resize_image(img, new_width, new_height):
     resized = cv2.resize(img, (int(new_width), int(new_height)))
     return resized
 
+
 def delete_list_of_files(files):
     for file in files:
         os.remove(file)
+
+
 def rename_list_of_files(files, alt="_alt"):
     for file in files:
         file_name, key = file
@@ -279,7 +307,8 @@ def rename_list_of_files(files, alt="_alt"):
         ext = fl.split(".")[-1]
         just_file = fl.replace("." + ext, "")
         rm_alt = just_file.split(alt)[0]
-        shutil.move(file_name, os.path.join(dir, f"{rm_alt}__{key}.{ext}") )
+        shutil.move(file_name, os.path.join(dir, f"{rm_alt}__{key}.{ext}"))
+
 
 def show_real_check(filenames, ref, description, originals):
     # sg.theme('Dark Brown')
@@ -304,9 +333,11 @@ def show_real_check(filenames, ref, description, originals):
         keys = [x.split("_")[0] for x in list(values.keys())]
         for key in keys:
             yield key
+
     def clear_all():
         for key in loop_keys():
             window.Element(f"{key}_text").update("")
+
     def all_full():
         for key in loop_keys():
             if not values[f"{key}_text"]:
@@ -316,17 +347,16 @@ def show_real_check(filenames, ref, description, originals):
     def get_next_number():
         reorder_list = []
         for key in loop_keys():
-            if values[f"{key}_text"] not in ["delete",""]:
+            if values[f"{key}_text"] not in ["delete", ""]:
                 reorder_list.append(int(values[f"{key}_text"]))
-        return max(reorder_list)+1 if reorder_list else 1
+        return max(reorder_list) + 1 if reorder_list else 1
 
     def get_next_number():
         reorder_list = []
         for key in loop_keys():
-            if values[f"{key}_text"] not in ["delete",""]:
+            if values[f"{key}_text"] not in ["delete", ""]:
                 reorder_list.append(int(values[f"{key}_text"]))
-        return max(reorder_list)+1 if reorder_list else 1
-
+        return max(reorder_list) + 1 if reorder_list else 1
 
     def get_deal_with_all():
         delete_list = []
@@ -338,9 +368,11 @@ def show_real_check(filenames, ref, description, originals):
                 reorder_list.append([filenames[int(key)], values[f"{key}_text"]])
 
         if not validate_list([x[1] for x in reorder_list]):
-            sg.popup("You haven't got the list of priority right check again please", title="Error", button_type=None, auto_close=False, auto_close_duration=None)
+            sg.popup("You haven't got the list of priority right check again please", title="Error", button_type=None,
+                     auto_close=False, auto_close_duration=None)
         else:
             return delete_list, reorder_list
+
     def validate_list(strings):
         # convert the strings to integers
         integers = [int(s) for s in strings]
@@ -387,7 +419,8 @@ def show_real_check(filenames, ref, description, originals):
                 window.close()
                 return delete_list, reorder_list
             else:
-                sg.popup("You haven't filled in all the products", title="Error", button_type=None, auto_close=False, auto_close_duration=None)
+                sg.popup("You haven't filled in all the products", title="Error", button_type=None, auto_close=False,
+                         auto_close_duration=None)
         elif "clear" in event:
             clear_all()
         elif "keep" in event:
@@ -401,6 +434,7 @@ def show_real_check(filenames, ref, description, originals):
             open_file(window.Element(f"{key_val}_view").metadata["file"])
 
     window.close()
+
 
 def show_image_window(filename, ref, description, move_func, ref_matches=None, source=None):
     """
@@ -611,6 +645,11 @@ def count_matches(strings, x, path):
     out = np.array([repeated_search_term[:len(s)] for s in strings])
     partial_matches = strings[np.where(out == strings)[0]]
 
+    # Create a NumPy array of strings
+    search_prefix = x[:4]
+    # Find all occurrences where the first four characters match the search prefix
+    first_part_matches = strings[np.where(np.char.find(strings, search_prefix) == 0)[0]]
+
     path, file = os.path.split(path)
     split_path = path.split("/")[-1].split("\\")
 
@@ -632,7 +671,8 @@ def count_matches(strings, x, path):
     return closest_match(exact_matches, x), \
         first_section_matches.tolist(), \
         partial_matches.tolist(), \
-        closest_match(path_matches, x) or closest_match(path_matches_one, x)
+        closest_match(path_matches, x) or closest_match(path_matches_one, x), \
+        first_part_matches.tolist()
 
 
 def pprint(text, i=None, total=None, start=None):
@@ -658,7 +698,9 @@ def pprint(text, i=None, total=None, start=None):
                                                                     secs_left) + f" no {i}/{total} "
 
     print_str += "" if not start or not (i and total) else "  -  "
-    print("                                                                                                                                                        ", end="\r")
+    print(
+        "                                                                                                                                                        ",
+        end="\r")
     print(print_str + text, end="\r")
 
 
@@ -673,8 +715,10 @@ def is_large_file(file):
 
 
 def shrink_stock_ref(ref):
-    return str(ref).lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "").replace(" /", "/").replace(
+    return str(ref).lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "").replace(" /",
+                                                                                                        "/").replace(
         "\\", "").replace("  ", "").strip()
+
 
 def fix_nan(row):
     for i, row_item in enumerate(row):
